@@ -8,10 +8,6 @@ short-term PV power forecasting; released as a companion dataset to a
 dissertation studying gradient boosting vs. deep learning architectures for
 single- and cross-site solar generation prediction.
 
-All original Romanian column headers, status labels, and metadata text have
-been translated to English (see [Translation](#translation) below); no
-Romanian-language content remains anywhere in the dataset.
-
 ## What's in here
 
 Each site has its own folder with two layers:
@@ -20,7 +16,7 @@ Each site has its own folder with two layers:
 site_a/
 ├── site_a_hourly_weather.csv   ← recommended starting point
 └── raw/
-    ├── site_a_2025-01.xlsx     ← original 5-minute inverter export (anonymized, trimmed, translated)
+    ├── site_a_2025-01.xlsx     ← original 5-minute inverter export (anonymized, trimmed)
     ├── site_a_2025-02.xlsx
     └── ...
 site_b/
@@ -60,7 +56,7 @@ anonymized site coordinates.
 | `grid_freq_hz` | Hz | Grid frequency at the point of connection |
 | `power_factor` | — | AC power factor |
 | `efficiency_pct` | % | Inverter conversion efficiency |
-| `inverter_status` | text (English) | Inverter status, e.g. `Standby: no sunlight`, `Connected to grid` (see the [full translation table](#status-translation)) |
+| `inverter_status` | text (English) | Inverter status, e.g. `Standby: no sunlight`, `Connected to grid` (see the [full list](#inverter-status-values)) |
 | `is_generating` | 0/1 | 1 if any 5-minute reading in that hour had `active_power_kw > 0` |
 | `temp_c` | °C | Ambient air temperature (Open-Meteo, 2 m) |
 | `humidity_pct` | % | Relative humidity |
@@ -82,18 +78,17 @@ accompanying research (elevation > 5°).
 ### Layer 2: `raw/<site>_YYYY-MM.xlsx`
 
 The original Huawei FusionSolar 5-minute export for each calendar month,
-anonymized, trimmed, and translated to English. Trimmed from ~114 columns
+anonymized and trimmed. Trimmed from ~114 columns
 down to the 13 that carry real information (see
 [Anonymization](#anonymization); most of the discarded columns are
 per-string diagnostics that are >98% null on a 6-MPPT inverter, or
 administrative fields).
 
-The row layout matches the original vendor format, but **all header names,
-metadata labels, and status text have been translated from Romanian to
-English**. This file will not work as-is with a parser written against the
-original Romanian FusionSolar export column names. If you need to reproduce
-that exact pipeline, rename the columns back per the table below, or start
-from the already-English `hourly_weather.csv` instead.
+The row layout matches the original vendor format. All column headers,
+metadata labels, and status text are in English (see the header table
+below). A parser written for the raw vendor export column names will not
+match these headers as-is; start from the already-clean
+`hourly_weather.csv` if you want the simplest interface.
 
 - Row 1: `Time range:` (calendar period covered by the export)
 - Row 2: `Export date/time:` (when the file was generated, not a data value)
@@ -101,40 +96,37 @@ from the already-English `hourly_weather.csv` instead.
 - Row 4: column headers
 - Row 5 onward: one row per 5-minute reading
 
-| English header (this file) | Original Romanian header | Meaning |
-|---|---|---|
-| `Site Name` | `Nume locație` | Site display name, anonymized to `Site A` / `Site B` |
-| `Installer` | `Domeniu de management` | Installer/management company, anonymized to `Installer` |
-| `Device Name` | `Nume dispozitiv` | Logger/device identifier, anonymized with the model substring preserved |
-| `Start Date/Time` | `Dată și oră de început` | Reading start timestamp |
-| `Active Power (kW)` | `Putere activă(kW)` | AC active power |
-| `Total Input Power (kW)` | `Putere totală de intrare(kW)` | Total DC input power |
-| `Daily Energy (kWh)` | `Energie zilnică(kWh)` | Daily energy (resets at midnight) |
-| `Total PV Yield (kWh)` | `Randament fotovoltaic total(kWh)` | Lifetime cumulative energy |
-| `Internal Temperature (°C)` | `Temperatura internă(℃)` | Internal inverter temperature |
-| `Grid Frequency (Hz)` | `Frecvența rețelei(Hz)` | Grid frequency |
-| `Power Factor` | `Factor de putere` | Power factor |
-| `Conversion Efficiency (%)` | `Eficiența conversiei(%)` | Conversion efficiency |
-| `Inverter Status` | `Starea invertorului` | Inverter status string |
-
-#### Status translation
-
-Eight distinct inverter status strings occur across both sites; all are
-translated as follows.
-
-| English (this file) | Original Romanian |
+| Header | Meaning |
 |---|---|
-| Connected to grid | Conectată la rețea |
-| OFF: unexpected shutdown | OFF: oprire neașteptată |
-| Standby: detecting sunlight | Standby: detectarea luminii solare |
-| Standby: detecting insulation resistance | Standby: detectarea rezistenței de izolație |
-| Standby: detecting grid power | Standby: detectarea rețelei de alimentare |
-| Standby: initializing | Standby: inițializare |
-| Standby: no sunlight | Standby: lipsă lumină solară |
-| Starting up | În curs de pornire |
+| `Site Name` | Site display name, anonymized to `Site A` / `Site B` |
+| `Installer` | Installer/management company, anonymized to `Installer` |
+| `Device Name` | Logger/device identifier, anonymized with the model substring preserved |
+| `Start Date/Time` | Reading start timestamp |
+| `Active Power (kW)` | AC active power |
+| `Total Input Power (kW)` | Total DC input power |
+| `Daily Energy (kWh)` | Daily energy (resets at midnight) |
+| `Total PV Yield (kWh)` | Lifetime cumulative energy |
+| `Internal Temperature (°C)` | Internal inverter temperature |
+| `Grid Frequency (Hz)` | Grid frequency |
+| `Power Factor` | Power factor |
+| `Conversion Efficiency (%)` | Conversion efficiency |
+| `Inverter Status` | Inverter status string |
+
+#### Inverter status values
+
+Eight distinct inverter status strings occur across both sites:
+
+- Connected to grid
+- OFF: unexpected shutdown
+- Standby: detecting sunlight
+- Standby: detecting insulation resistance
+- Standby: detecting grid power
+- Standby: initializing
+- Standby: no sunlight
+- Starting up
 
 **Known data quirks** (inherited from the source logger, not artifacts of
-anonymization or translation):
+anonymization):
 - `-0.01` / `-0.1` sentinel values in some raw exports indicate a
   disconnected string channel. They are already absent from the trimmed
   columns above, but worth knowing if you go back to a fuller export.
@@ -172,14 +164,6 @@ All measurement data (power, energy, temperature, weather, timestamps) is
 unmodified. Every file was scanned line-by-line after processing to confirm
 no owner name, company name, street name, or serial number survived.
 
-## Translation
-
-Every Romanian word in the original vendor export (column headers,
-row-1/row-2 metadata labels, the row-3 legend text, and all 8 inverter
-status strings) has been translated to English (see the tables above).
-The dataset was scanned afterward for any remaining Romanian-alphabet
-diacritics (ă, â, î, ș, ț) to confirm nothing was missed.
-
 ## Known limitations
 
 - Both sites are in the same climate region and inverter class, so this
@@ -190,8 +174,8 @@ diacritics (ă, â, î, ș, ț) to confirm nothing was missed.
   so expect some divergence from true local microclimate, especially cloud cover.
 - No irradiance sensor ground-truth is available; `ghi_wm2`/`dni_wm2`/`dhi_wm2`
   are Open-Meteo estimates.
-- The translated raw `.xlsx` files are not drop-in compatible with a parser
-  written against the original Romanian column names (see Layer 2 above).
+- The raw `.xlsx` files use English column headers, so a parser written for
+  the original vendor export headers will not work as-is (see Layer 2 above).
 
 ## License
 
