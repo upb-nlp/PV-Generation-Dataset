@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: "If you use this dataset, please cite it as below."
+title: "Two-Site Solar PV Inverter & Weather Dataset (Romania)"
+abstract: >-
+  Hourly and 5-minute AC power generation data from two grid-connected,
+  50 kWp-class solar PV systems in southwestern Romania, each equipped with a
+  Huawei SUN2000 string inverter, joined with matched historical weather
+  (Open-Meteo) and solar position. Released for research on short-term PV power
+  forecasting.
+type: dataset
+authors:
+  - family-names: Linca
+    given-names: Nicolae-Robert
+  - family-names: Rebedea
+    given-names: Traian-Eugen
+  - family-names: Ruseti
+    given-names: Stefan
+  - family-names: Dascalu
+    given-names: Mihai
+date-released: 2026-07-19
+version: "1.0.0"
+license: CC-BY-4.0
+keywords:
+  - solar power forecasting
+  - photovoltaic
+  - PV generation
+  - time series
+  - weather
+  - gradient boosting
+  - Romania
+url: "https://github.com/upb-nlp/PV-Generation-Dataset"
+repository-code: "https://github.com/upb-nlp/PV-Generation-Dataset"
