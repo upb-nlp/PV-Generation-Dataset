@@ -8,9 +8,13 @@ short-term PV power forecasting; released as a companion dataset to a
 dissertation studying gradient boosting vs. deep learning architectures for
 single- and cross-site solar generation prediction.
 
+The repository also ships the forecasting toolkit used to produce those
+results. See [Forecasting toolkit](#forecasting-toolkit).
+
 ## What's in here
 
-Each site has its own folder with two layers:
+Each site has its own folder with two layers, and the toolkit sits
+alongside them:
 
 ```
 site_a/
@@ -23,6 +27,11 @@ site_b/
 ├── site_b_hourly_weather.csv
 └── raw/
     └── ...
+toolkit/
+├── pvforecast/                 forecasting library
+├── scripts/                    one script per experiment
+├── data/nwp/                   archived weather forecasts
+└── requirements.txt
 ```
 
 | | Site A | Site B |
@@ -148,6 +157,69 @@ daytime = df[df["solar_elevation_deg"] > 5]
 print(daytime[["active_power_kw", "capacity_factor", "ghi_wm2"]].describe())
 ```
 
+## Forecasting toolkit
+
+`toolkit/` holds the code behind the published experiments. It forecasts
+future generation from a recorded inverter history, and re-runs each
+experiment in the accompanying paper. It works on the two sites here or on
+any hourly history with the same columns.
+
+### Install and forecast
+
+```
+pip install -r toolkit/requirements.txt
+python toolkit/scripts/forecast.py --data-root . --site site_a --days 14
+```
+
+Run from the repository root, so `--data-root .` finds `site_a/` and
+`site_b/`. This trains on the site's whole history and writes hourly and
+daily forecasts to `results/forecast/`. Weather beyond the end of the record
+falls back to the site's month-by-hour climatology; supply a real forecast
+with `--weather file.csv` instead.
+
+PyTorch is needed only for the five deep models. Without it, the gradient
+boosting models, the persistence baselines and the operational forecaster
+all still run.
+
+### Running the experiments
+
+Each of the other scripts runs one experiment and writes a table to
+`results/tables/`, with per-month results beside it.
+
+| Script | What it does |
+|---|---|
+| `benchmark.py` | Compares the seven models against the persistence baselines |
+| `training_window.py` | Varies how many months of history the model is given |
+| `ablation.py` | Removes one feature group at a time |
+| `ensemble.py` | Averaging, inverse-error weighting, ridge stacking |
+| `cross_site.py` | Ranks the models at both sites over an aligned window |
+| `importance.py` | Gain importance per feature |
+| `deployment_horizon.py` | Forecasts a multi-week horizon with no observation from it |
+| `nwp_lead_time.py` | Varies the age of the weather input |
+
+```
+python toolkit/scripts/benchmark.py --data-root . --site site_a
+```
+
+Every script takes `--data-root`, `--site`, `--feature-set`, `--start`,
+`--end` (months as `YYYY-MM`), `--results-dir` and `--seed`. The boosting
+models and the baselines run in about a minute on a CPU; the deep models
+take considerably longer.
+
+### Method in brief
+
+The target is `capacity_factor`. Features are 28 columns in six groups:
+solar geometry (5), weather (7), cyclic time encodings (6), capacity-factor
+lags at 1, 2, 3 and 6 hours (4), rolling mean and standard deviation (3),
+and physics-derived terms (3). Rolling windows close one hour before the
+hour being predicted, so every input is available at prediction time.
+Evaluation is rolling-origin, never random: train on months 1 to N, predict
+month N+1, slide forward.
+
+[`toolkit/README.md`](toolkit/README.md) documents the feature sets, the
+module layout, how to register your own site, and how to plug in a
+different model.
+
 ## Anonymization
 
 This dataset describes real, privately owned solar PV systems. The
@@ -193,5 +265,6 @@ https://github.com/upb-nlp/PV-Generation-Dataset
 ```
 
 A companion research paper describes the short-term PV forecasting experiments
-built on this dataset (gradient boosting vs. deep learning, small-window and
-cross-site evaluation). Citation details will be added here once it is published.
+built on this dataset and on the toolkit released here (gradient boosting vs.
+deep learning, small-window and cross-site evaluation). Citation details will
+be added here once it is published.
