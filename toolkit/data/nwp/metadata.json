@@ -1,0 +1,13 @@
+{
+  "site_a": {
+    "requested": [
+      45.0,
+      23.3
+    ],
+    "model_grid": {
+      "latitude": 45.006638,
+      "longitude": 23.276682,
+      "elevation": 194.0
+    }
+  }
+}

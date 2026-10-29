@@ -17,6 +17,7 @@ from .features import (
     add_recency_weights,
     design_matrix,
     physics_terms,
+    row_validity,
     solar_geometry,
     time_encoding,
 )
@@ -90,9 +91,10 @@ class Forecaster:
         self.history_end: pd.Timestamp | None = None
 
     def fit(self, history: pd.DataFrame) -> "Forecaster":
-        daytime = history[history[DAYTIME] == 1]
+        usable = (history[DAYTIME] == 1) & row_validity(history, self.feature_cols)
+        daytime = history[usable]
         if daytime.empty:
-            raise ValueError("history contains no daytime rows")
+            raise ValueError("history contains no usable daytime rows")
 
         weighted = add_recency_weights(daytime)
         self.predict_fn = self.model_factory()(

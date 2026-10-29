@@ -11,6 +11,7 @@ import pandas as pd
 from .config import SITES, Site
 from .dataset import load_site, restrict
 from .features import FEATURE_SETS, build_features
+from .weather import DEFAULT_NWP_DIR, WEATHER_SOURCES, weather_inputs
 
 DEFAULT_DATA_ROOT = "."
 
@@ -30,6 +31,9 @@ def add_dataset_arguments(
     parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     parser.add_argument("--site", default=site_default, choices=sorted(SITES))
     parser.add_argument("--feature-set", default="full", choices=sorted(FEATURE_SETS))
+    parser.add_argument("--weather", default="nwp", choices=WEATHER_SOURCES,
+                        help="nwp: forecasts issued 24 h ahead; reanalysis: retrospective reference")
+    parser.add_argument("--nwp-dir", default=str(DEFAULT_NWP_DIR))
     parser.add_argument("--start", default=None, help="first month, YYYY-MM")
     parser.add_argument("--end", default=None, help="last month, YYYY-MM")
     parser.add_argument("--results-dir", default="results")
@@ -38,10 +42,12 @@ def add_dataset_arguments(
 
 
 def prepare(args: argparse.Namespace, site_key: str | None = None) -> tuple[pd.DataFrame, Site]:
-    df, site = load_site(args.data_root, site_key or args.site)
+    key = site_key or args.site
+    df, site = load_site(args.data_root, key)
     if args.start or args.end:
         df = restrict(df, args.start, args.end)
-    return build_features(df, site), site
+    weather = weather_inputs(df, key, args.weather, args.nwp_dir)
+    return build_features(df, site, weather), site
 
 
 def feature_columns(args: argparse.Namespace) -> list[str]:
