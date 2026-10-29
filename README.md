@@ -1,7 +1,7 @@
 # Two-Site Solar PV Inverter & Weather Dataset (Romania)
 
 Hourly and 5-minute AC power generation data from two grid-connected,
-50 kWp-class solar PV systems in southwestern Romania, each
+50 kW solar PV systems in southwestern Romania, each
 equipped with a Huawei SUN2000 string inverter, joined with matched
 historical weather (Open-Meteo) and solar position. Built for research on
 short-term PV power forecasting; released as a companion dataset to a
@@ -13,8 +13,8 @@ results. See [Forecasting toolkit](#forecasting-toolkit).
 
 ## What's in here
 
-Each site has its own folder with two layers, and the toolkit sits
-alongside them:
+Each site has its own folder with two layers. The archived weather
+forecasts and the toolkit sit alongside them:
 
 ```
 site_a/
@@ -27,10 +27,13 @@ site_b/
 ├── site_b_hourly_weather.csv
 └── raw/
     └── ...
+archived_forecasts/
+├── site_a_and_b_lead0.csv      ← Open-Meteo forecasts issued 0 to 7 days ahead
+└── ...
 toolkit/
 ├── pvforecast/                 forecasting library
-├── scripts/                    one script per experiment
-├── data/nwp/                   archived weather forecasts
+├── scripts/                    experiment and reproduction scripts
+├── data/nwp/                   archived weather forecasts used by the toolkit
 └── requirements.txt
 ```
 
@@ -39,7 +42,7 @@ toolkit/
 | Coverage | 2025-01-04 → 2026-06-30 | 2025-05-01 → 2026-05-31 |
 | Months | 18 | 13 |
 | Inverter | Huawei SUN2000, 50KTL-M0 | Huawei SUN2000, 50K-M0 |
-| Rated capacity | 50 kWp | 50 kWp |
+| Rated capacity | 50 kW (inverter nominal AC rating) | 50 kW (inverter nominal AC rating) |
 | Location | Southwestern Romania (≈45.0°N, 23.3°E, see [Anonymization](#anonymization)) | Same region |
 | Climate | Sub-Carpathian temperate: hot/moderately sunny summers, cold/frequently overcast winters | Same |
 
@@ -49,14 +52,19 @@ trained on one site generalizes to another.
 
 ### Layer 1: `<site>_hourly_weather.csv` (recommended)
 
-One row per hour. Inverter output resampled from 5-minute readings, left-joined
-with hourly historical weather (Open-Meteo Archive API) and solar position
-(computed with [pvlib](https://pvlib-python.readthedocs.io/)) at the
-anonymized site coordinates.
+One row per UTC hour, on a complete hourly grid. Each row holds the inverter
+output averaged from the 5-minute readings of the hour `[datetime_utc,
+datetime_utc + 1 h)`, joined with the hourly historical weather (Open-Meteo
+Archive API) and the solar position (computed with
+[pvlib](https://pvlib-python.readthedocs.io/)) of the same interval, at the
+anonymized site coordinates. The weather columns hold the Open-Meteo record
+valid at the end of the hour, whose radiation values are averages over that
+hour, and the solar position is computed at the midpoint of the hour.
 
 | Column | Unit | Description |
 |---|---|---|
-| `datetime_local` | timestamp | Local time (Europe/Bucharest, DST-naive as exported by the inverter logger) |
+| `datetime_utc` | timestamp | Start of the hour in UTC; the row covers [datetime_utc, datetime_utc + 1 h) |
+| `datetime_local` | timestamp | Start of the same hour in Europe/Bucharest time, with its UTC offset |
 | `active_power_kw` | kW | AC power delivered to the grid, the primary target variable |
 | `dc_input_power_kw` | kW | Total DC input power from the PV strings |
 | `daily_energy_kwh` | kWh | Cumulative energy generated since midnight (resets daily) |
@@ -75,14 +83,16 @@ anonymized site coordinates.
 | `dni_wm2` | W/m² | Direct normal irradiance |
 | `dhi_wm2` | W/m² | Diffuse horizontal irradiance |
 | `precip_mm` | mm | Hourly precipitation |
-| `solar_elevation_deg` | ° | Sun elevation angle above the horizon (negative = sun below horizon) |
-| `solar_azimuth_deg` | ° | Sun azimuth angle (0° = north, 90° = east) |
+| `solar_elevation_deg` | ° | Sun elevation at the midpoint of the hour, clipped at zero |
+| `solar_azimuth_deg` | ° | Sun azimuth at the midpoint of the hour (0° = north, 90° = east) |
 | `capacity_factor` | 0–1 | `active_power_kw / 50.0`, clipped to [0, 1], the standard normalized target for cross-site comparison |
 
 Night-time hours are included with `active_power_kw = 0` (the inverter
-genuinely reports zero, not missing data). Filter on `solar_elevation_deg`
-if you want daytime-only evaluation, which is the convention used in the
-accompanying research (elevation > 5°).
+genuinely reports zero, not missing data). Hours missing from the inverter
+exports, around the daylight-saving changes at the ends of March and October,
+are present with empty measurement columns, never zeros. Filter on
+`solar_elevation_deg` if you want daytime-only evaluation, which is the
+convention used in the accompanying research (elevation > 5°).
 
 ### Layer 2: `raw/<site>_YYYY-MM.xlsx`
 
@@ -144,13 +154,24 @@ anonymization):
 - Site A's first data point starts 2025-01-04 rather than 2025-01-01; the
   first 3 days of January 2025 were not present in the original export.
 
+### Archived weather forecasts: `archived_forecasts/`
+
+Open-Meteo forecasts from its previous-runs archive, as they were issued 0 to 7
+days before each hour (`site_a_and_b_lead<k>.csv` holds the run issued `k` days
+ahead), stamped by `valid_time_utc` with the same seven weather columns as the
+hourly files. Unlike the historical weather in the hourly files, these were
+available before the hour they describe, so they can be used as inputs to an
+operational forecast. Both sites share them because they fall in the same
+weather-model grid cell. They are kept because the archive retains model runs
+for only seven days, so they cannot be downloaded again.
+
 ## Quick start
 
 ```python
 import pandas as pd
 
-df = pd.read_csv("site_a/site_a_hourly_weather.csv", parse_dates=["datetime_local"])
-df = df.set_index("datetime_local")
+df = pd.read_csv("site_a/site_a_hourly_weather.csv", parse_dates=["datetime_utc"])
+df = df.set_index("datetime_utc")
 
 # Daytime-only rows, the convention used in the accompanying research
 daytime = df[df["solar_elevation_deg"] > 5]
@@ -177,13 +198,31 @@ daily forecasts to `results/forecast/`. Weather beyond the end of the record
 falls back to the site's month-by-hour climatology; supply a real forecast
 with `--weather file.csv` instead.
 
+### Reproducing the paper
+
+```
+python toolkit/scripts/tune.py --data-root . --results-dir results/revision
+python toolkit/scripts/revision_runner.py --data-root .
+python toolkit/scripts/operational.py --data-root .
+python toolkit/scripts/revision_report.py --data-root .
+python toolkit/scripts/latex_tables.py
+python toolkit/scripts/figures.py
+```
+
+`tune.py` selects every model's configuration on one validation month,
+`revision_runner.py` runs the walk-forward experiments with three seeds,
+`operational.py` evaluates fixed-origin 14-day forecasts, and the last three
+scripts build the tables, statistical tests and figures.
+[`toolkit/README.md`](toolkit/README.md) maps each script to the tables and
+figures of the paper.
+
 PyTorch is needed only for the five deep models. Without it, the gradient
 boosting models, the persistence baselines and the operational forecaster
 all still run.
 
-### Running the experiments
+### Running single experiments
 
-Each of the other scripts runs one experiment and writes a table to
+These scripts each run one experiment and write a table to
 `results/tables/`, with per-month results beside it.
 
 | Script | What it does |
@@ -195,14 +234,13 @@ Each of the other scripts runs one experiment and writes a table to
 | `cross_site.py` | Ranks the models at both sites over an aligned window |
 | `importance.py` | Gain importance per feature |
 | `deployment_horizon.py` | Forecasts a multi-week horizon with no observation from it |
-| `nwp_lead_time.py` | Varies the age of the weather input |
 
 ```
 python toolkit/scripts/benchmark.py --data-root . --site site_a
 ```
 
-Every script takes `--data-root`, `--site`, `--feature-set`, `--start`,
-`--end` (months as `YYYY-MM`), `--results-dir` and `--seed`. The boosting
+Every script takes `--data-root`, `--site`, `--feature-set`, `--weather`,
+`--start`, `--end` (months as `YYYY-MM`), `--results-dir` and `--seed`. The boosting
 models and the baselines run in about a minute on a CPU; the deep models
 take considerably longer.
 
@@ -211,8 +249,10 @@ take considerably longer.
 The target is `capacity_factor`. Features are 28 columns in six groups:
 solar geometry (5), weather (7), cyclic time encodings (6), capacity-factor
 lags at 1, 2, 3 and 6 hours (4), rolling mean and standard deviation (3),
-and physics-derived terms (3). Rolling windows close one hour before the
-hour being predicted, so every input is available at prediction time.
+and physics-derived terms (3). By default the weather columns come from the
+forecast issued 24 hours ahead (`toolkit/data/nwp/`), and rolling windows close
+one hour before the hour being predicted, so every input is available at
+prediction time.
 Evaluation is rolling-origin, never random: train on months 1 to N, predict
 month N+1, slide forward.
 
@@ -232,8 +272,8 @@ following was removed or generalized before release:
 - Exact GPS coordinates were rounded to 1 decimal place (~11 km resolution) in this README and in the solar-position calculation. That is precise enough for solar geometry (elevation and azimuth) but not precise enough to identify an address.
 - Document metadata was checked: the original files' embedded author and editor properties contained no personal information, only the generating software's name, so no further action was needed.
 
-All measurement data (power, energy, temperature, weather, timestamps) is
-unmodified. Every file was scanned line-by-line after processing to confirm
+All measurement data (power, energy, temperature, weather) is unmodified;
+the hourly files give each timestamp in UTC alongside local time. Every file was scanned line-by-line after processing to confirm
 no owner name, company name, street name, or serial number survived.
 
 ## Known limitations
@@ -242,8 +282,11 @@ no owner name, company name, street name, or serial number survived.
   dataset alone cannot establish whether findings generalize to different
   climates, orientations, or system sizes.
 - Site B has 5 fewer months of history than Site A (13 vs. 18).
-- Weather is reanalysis data (Open-Meteo Archive), not on-site measurement,
-  so expect some divergence from true local microclimate, especially cloud cover.
+- The weather columns of the hourly files are reanalysis data (Open-Meteo
+  Archive), not on-site measurement, so expect some divergence from true local
+  microclimate, especially cloud cover. They describe the weather that occurred
+  and are published days later; for operational inputs use
+  `archived_forecasts/`.
 - No irradiance sensor ground-truth is available; `ghi_wm2`/`dni_wm2`/`dhi_wm2`
   are Open-Meteo estimates.
 - The raw `.xlsx` files use English column headers, so a parser written for

@@ -54,6 +54,7 @@ def _combine(
                 scores=metrics(iteration.y_true, y_pred, capacity_kwp),
                 y_true=iteration.y_true,
                 y_pred=y_pred,
+                timestamps=iteration.timestamps,
             )
         )
     return ensemble
@@ -71,18 +72,41 @@ def average(members: dict[str, Evaluation], capacity_kwp: float = 50.0) -> Evalu
 def inverse_error_weighted(
     members: dict[str, Evaluation],
     capacity_kwp: float = 50.0,
-) -> tuple[Evaluation, dict[str, float]]:
-    raw = {name: 1.0 / max(ev.mean()["nrmse"], 1e-6) for name, ev in members.items()}
-    total = sum(raw.values())
-    weights = {name: value / total for name, value in raw.items()}
+) -> tuple[Evaluation, list[dict[str, float]]]:
+    """Weights proportional to 1/nRMSE over the folds before each test month (none from the month itself)."""
+    names = list(members)
+    aligned = _aligned(members)
+    ensemble = Evaluation(name="ensemble_weighted")
+    history: list[dict[str, float]] = []
 
-    ensemble = _combine(
-        members,
-        "ensemble_weighted",
-        lambda preds: sum(weights[name] * preds[name] for name in preds),
-        capacity_kwp,
-    )
-    return ensemble, weights
+    for position in range(1, len(aligned)):
+        past = aligned[:position]
+        raw = {
+            name: 1.0 / max(np.mean([metrics(it.y_true, preds[name], capacity_kwp)["nrmse"] for it, preds in past]), 1e-6)
+            for name in names
+        }
+        total = sum(raw.values())
+        weights = {name: value / total for name, value in raw.items()}
+        history.append(weights)
+
+        iteration, predictions = aligned[position]
+        y_pred = np.clip(sum(weights[name] * predictions[name] for name in names), 0.0, 1.0)
+        ensemble.iterations.append(
+            Iteration(
+                index=iteration.index,
+                test_month=iteration.test_month,
+                train_start=iteration.train_start,
+                train_end=iteration.train_end,
+                train_rows=iteration.train_rows,
+                test_rows=iteration.test_rows,
+                train_time_sec=0.0,
+                scores=metrics(iteration.y_true, y_pred, capacity_kwp),
+                y_true=iteration.y_true,
+                y_pred=y_pred,
+                timestamps=iteration.timestamps,
+            )
+        )
+    return ensemble, history
 
 
 def ridge_stack(
@@ -124,6 +148,7 @@ def ridge_stack(
                 scores=metrics(iteration.y_true, y_pred, capacity_kwp),
                 y_true=iteration.y_true,
                 y_pred=y_pred,
+                timestamps=iteration.timestamps,
             )
         )
     return ensemble

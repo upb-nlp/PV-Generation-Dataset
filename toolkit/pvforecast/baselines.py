@@ -10,7 +10,7 @@ import pandas as pd
 from .features import TARGET
 
 CLEARSKY = "clearsky_ghi_wm2"
-CLEARSKY_FLOOR = 10.0
+CLEARSKY_FLOOR = 50.0
 
 
 def _lagged(series: pd.Series, timestamps: pd.DatetimeIndex, hours: int) -> np.ndarray:
@@ -18,14 +18,12 @@ def _lagged(series: pd.Series, timestamps: pd.DatetimeIndex, hours: int) -> np.n
 
 
 def naive_persistence(df: pd.DataFrame) -> Callable:
+    """The capacity factor of the previous hour."""
     capacity_factor = df[TARGET]
 
     def model_fn(X_train, y_train, w_train):
-        anchor = float(y_train[-1]) if len(y_train) else 0.0
-
         def predict_fn(X_test, timestamps):
-            values = _lagged(capacity_factor, timestamps, 1)
-            return np.clip(np.nan_to_num(values, nan=anchor), 0.0, 1.0)
+            return np.clip(_lagged(capacity_factor, timestamps, 1), 0.0, 1.0)
 
         return predict_fn
 
@@ -33,14 +31,12 @@ def naive_persistence(df: pd.DataFrame) -> Callable:
 
 
 def day_persistence(df: pd.DataFrame) -> Callable:
+    """The capacity factor at the same hour of the previous day."""
     capacity_factor = df[TARGET]
 
     def model_fn(X_train, y_train, w_train):
-        anchor = float(y_train[-1]) if len(y_train) else 0.0
-
         def predict_fn(X_test, timestamps):
-            values = _lagged(capacity_factor, timestamps, 24)
-            return np.clip(np.nan_to_num(values, nan=anchor), 0.0, 1.0)
+            return np.clip(_lagged(capacity_factor, timestamps, 24), 0.0, 1.0)
 
         return predict_fn
 
@@ -48,23 +44,22 @@ def day_persistence(df: pd.DataFrame) -> Callable:
 
 
 def smart_persistence(df: pd.DataFrame) -> Callable:
+    """Clear-sky-index persistence: the previous hour rescaled by the change in clear-sky irradiance.
+
+    Predicts CF(t-1) * GHI_cs(t) / GHI_cs(t-1), i.e. it holds the clear-sky index of the previous
+    hour constant and lets the deterministic diurnal cycle move the forecast.
+    """
     capacity_factor = df[TARGET]
     if CLEARSKY not in df.columns:
         raise ValueError(f"smart persistence requires the '{CLEARSKY}' column")
     clearsky = df[CLEARSKY]
 
     def model_fn(X_train, y_train, w_train):
-        anchor = float(y_train[-1]) if len(y_train) else 0.0
-
         def predict_fn(X_test, timestamps):
-            yesterday = np.nan_to_num(_lagged(capacity_factor, timestamps, 24), nan=anchor)
+            previous = _lagged(capacity_factor, timestamps, 1)
             now = clearsky.reindex(timestamps).to_numpy(dtype=np.float64)
-            before = _lagged(clearsky, timestamps, 24)
-
-            scale = np.ones_like(yesterday)
-            usable = np.isfinite(now) & np.isfinite(before) & (before > CLEARSKY_FLOOR)
-            scale[usable] = now[usable] / before[usable]
-            return np.clip(yesterday * scale, 0.0, 1.0)
+            before = np.maximum(_lagged(clearsky, timestamps, 1), CLEARSKY_FLOOR)
+            return np.clip(previous * now / before, 0.0, 1.0)
 
         return predict_fn
 
@@ -73,8 +68,8 @@ def smart_persistence(df: pd.DataFrame) -> Callable:
 
 BASELINES: dict[str, Callable[[pd.DataFrame], Callable]] = {
     "naive_persistence": naive_persistence,
-    "day_persistence": day_persistence,
     "smart_persistence": smart_persistence,
+    "day_persistence": day_persistence,
 }
 
 BASELINE_NAMES = tuple(BASELINES)

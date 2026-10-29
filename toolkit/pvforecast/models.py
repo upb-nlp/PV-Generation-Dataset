@@ -20,7 +20,7 @@ XGBOOST_PARAMS: dict[str, Any] = {
     "tree_method": "hist",
     "random_state": 42,
     "verbosity": 0,
-    "n_jobs": -1,
+    "n_jobs": 4,
 }
 
 LIGHTGBM_PARAMS: dict[str, Any] = {
@@ -28,12 +28,13 @@ LIGHTGBM_PARAMS: dict[str, Any] = {
     "max_depth": 6,
     "learning_rate": 0.05,
     "subsample": 0.8,
+    "subsample_freq": 1,
     "colsample_bytree": 0.8,
     "min_child_samples": 20,
     "objective": "regression",
     "random_state": 42,
     "verbosity": -1,
-    "n_jobs": -1,
+    "n_jobs": 4,
 }
 
 WARM_START_ESTIMATORS = 100
@@ -41,6 +42,18 @@ WARM_START_ESTIMATORS = 100
 
 def _clip(values: np.ndarray) -> np.ndarray:
     return np.clip(np.asarray(values, dtype=np.float64), 0.0, 1.0)
+
+
+def _usable(X_train, y_train, w_train):
+    keep = np.asarray(w_train) > 0
+    return X_train[keep], y_train[keep], w_train[keep]
+
+
+def _seeded(params: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    merged = {**params, **overrides}
+    if "seed" in merged:
+        merged["random_state"] = merged.pop("seed")
+    return merged
 
 
 def _named(X: np.ndarray):
@@ -53,56 +66,56 @@ def _named(X: np.ndarray):
 
 
 def xgboost(**overrides: Any) -> ModelFn:
-    params = {**XGBOOST_PARAMS, **overrides}
+    params = _seeded(XGBOOST_PARAMS, overrides)
 
     def model_fn(X_train, y_train, w_train):
         from xgboost import XGBRegressor
 
+        X, y, w = _usable(X_train, y_train, w_train)
         model = XGBRegressor(**params)
-        model.fit(X_train, y_train, sample_weight=w_train)
+        model.fit(X, y, sample_weight=w)
 
         def predict_fn(X_test, timestamps=None):
             return _clip(model.predict(X_test))
 
+        predict_fn.model = model
         return predict_fn
 
     return model_fn
 
 
 def lightgbm(**overrides: Any) -> ModelFn:
-    params = {**LIGHTGBM_PARAMS, **overrides}
+    params = _seeded(LIGHTGBM_PARAMS, overrides)
 
     def model_fn(X_train, y_train, w_train):
         from lightgbm import LGBMRegressor
 
+        X, y, w = _usable(X_train, y_train, w_train)
         model = LGBMRegressor(**params)
-        model.fit(_named(X_train), y_train, sample_weight=w_train)
+        model.fit(_named(X), y, sample_weight=w)
 
         def predict_fn(X_test, timestamps=None):
             return _clip(model.predict(_named(X_test)))
 
+        predict_fn.model = model
         return predict_fn
 
     return model_fn
 
 
 def xgboost_warm(update_estimators: int = WARM_START_ESTIMATORS, **overrides: Any) -> ModelFn:
-    params = {**XGBOOST_PARAMS, **overrides}
+    params = _seeded(XGBOOST_PARAMS, overrides)
     booster: list = [None]
 
     def model_fn(X_train, y_train, w_train):
         from xgboost import XGBRegressor
 
+        X, y, w = _usable(X_train, y_train, w_train)
         started = booster[0] is not None
         model = XGBRegressor(
             **{**params, "n_estimators": update_estimators if started else params["n_estimators"]}
         )
-        model.fit(
-            X_train,
-            y_train,
-            sample_weight=w_train,
-            **({"xgb_model": booster[0]} if started else {}),
-        )
+        model.fit(X, y, sample_weight=w, **({"xgb_model": booster[0]} if started else {}))
         booster[0] = model.get_booster()
 
         def predict_fn(X_test, timestamps=None):
@@ -114,17 +127,18 @@ def xgboost_warm(update_estimators: int = WARM_START_ESTIMATORS, **overrides: An
 
 
 def lightgbm_warm(update_estimators: int = WARM_START_ESTIMATORS, **overrides: Any) -> ModelFn:
-    params = {**LIGHTGBM_PARAMS, **overrides}
+    params = _seeded(LIGHTGBM_PARAMS, overrides)
     booster: list = [None]
 
     def model_fn(X_train, y_train, w_train):
         from lightgbm import LGBMRegressor
 
+        X, y, w = _usable(X_train, y_train, w_train)
         started = booster[0] is not None
         model = LGBMRegressor(
             **{**params, "n_estimators": update_estimators if started else params["n_estimators"]}
         )
-        model.fit(_named(X_train), y_train, sample_weight=w_train, init_model=booster[0])
+        model.fit(_named(X), y, sample_weight=w, init_model=booster[0])
         booster[0] = model.booster_
 
         def predict_fn(X_test, timestamps=None):

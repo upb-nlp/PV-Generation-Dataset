@@ -16,6 +16,7 @@ ELEVATION_THRESHOLD = 5.0
 LAG_HOURS = (1, 2, 3, 6)
 TEMPERATURE_COEFFICIENT = -0.0045
 REFERENCE_TEMPERATURE = 25.0
+SEQUENCE_LENGTH = 24
 
 SOLAR_FEATURES = [
     "solar_elevation_deg",
@@ -45,14 +46,16 @@ LAG_FEATURES = [f"cf_lag_{h}h" for h in LAG_HOURS]
 ROLLING_FEATURES = ["cf_roll3h_mean", "cf_roll3h_std", "cf_roll6h_mean"]
 PHYSICS_FEATURES = ["temp_efficiency_factor", "cloud_transmission", "clearsky_index"]
 
+CORE_FEATURES = LAG_FEATURES + ROLLING_FEATURES
+ENDOGENOUS_FEATURES = SOLAR_FEATURES + TIME_FEATURES + LAG_FEATURES + ROLLING_FEATURES
 BASE_FEATURES = (
     SOLAR_FEATURES + WEATHER_FEATURES + TIME_FEATURES + LAG_FEATURES + ROLLING_FEATURES
 )
 FULL_FEATURES = BASE_FEATURES + PHYSICS_FEATURES
-CORE_FEATURES = LAG_FEATURES + ROLLING_FEATURES
 
 FEATURE_SETS: dict[str, list[str]] = {
     "core": CORE_FEATURES,
+    "endogenous": ENDOGENOUS_FEATURES,
     "base": BASE_FEATURES,
     "full": FULL_FEATURES,
 }
@@ -66,15 +69,17 @@ FEATURE_GROUPS: dict[str, list[str]] = {
     "physics": PHYSICS_FEATURES,
 }
 
-REQUIRED_COLUMNS = [POWER_COLUMN] + WEATHER_FEATURES
+REQUIRED_COLUMNS = [POWER_COLUMN]
 
 
 def solar_geometry(index: pd.DatetimeIndex, site: Site) -> pd.DataFrame:
+    """Solar position and clear-sky irradiance at the midpoint of each hour starting at ``index``."""
     import pvlib
 
+    midpoints = index + pd.Timedelta(minutes=30)
     location = pvlib.location.Location(site.latitude, site.longitude, tz="UTC")
-    position = location.get_solarposition(index)
-    clearsky = location.get_clearsky(index)
+    position = location.get_solarposition(midpoints)
+    clearsky = location.get_clearsky(midpoints)
     elevation = position["elevation"].to_numpy().clip(min=0.0)
 
     return pd.DataFrame(
@@ -126,13 +131,29 @@ def physics_terms(
     )
 
 
-def build_features(df: pd.DataFrame, site: Site) -> pd.DataFrame:
+def build_features(
+    df: pd.DataFrame,
+    site: Site,
+    weather: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Feature matrix on the hourly UTC grid of ``df``.
+
+    ``weather`` replaces the weather columns of ``df`` (for example with archived forecasts);
+    it must be indexed by the start of the generation hour it describes. Missing inverter hours
+    stay missing in the target and in every lag or rolling window that touches them.
+    """
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"input frame is missing required columns: {missing}")
 
     out = df.copy()
-    out[TARGET] = (out[POWER_COLUMN] / site.capacity_kwp).clip(0.0, 1.0).fillna(0.0)
+    if weather is not None:
+        out[WEATHER_FEATURES] = weather.reindex(out.index)[WEATHER_FEATURES].to_numpy()
+    for column in WEATHER_FEATURES:
+        if column not in out.columns:
+            out[column] = np.nan
+
+    out[TARGET] = (out[POWER_COLUMN] / site.capacity_kwp).clip(0.0, 1.0)
 
     geometry = solar_geometry(out.index, site)
     out[geometry.columns] = geometry
@@ -147,9 +168,9 @@ def build_features(df: pd.DataFrame, site: Site) -> pd.DataFrame:
     # rolling windows close one step before the predicted hour, so no feature
     # can contain the value being predicted
     window_source = capacity_factor.shift(1)
-    out["cf_roll3h_mean"] = window_source.rolling(3, min_periods=1).mean()
-    out["cf_roll3h_std"] = window_source.rolling(3, min_periods=1).std().fillna(0.0)
-    out["cf_roll6h_mean"] = window_source.rolling(6, min_periods=1).mean()
+    out["cf_roll3h_mean"] = window_source.rolling(3, min_periods=3).mean()
+    out["cf_roll3h_std"] = window_source.rolling(3, min_periods=3).std()
+    out["cf_roll6h_mean"] = window_source.rolling(6, min_periods=6).mean()
 
     physics = physics_terms(
         out["temp_c"], out["cloud_cover_pct"], out["ghi_wm2"], out["clearsky_ghi_wm2"]
@@ -158,6 +179,19 @@ def build_features(df: pd.DataFrame, site: Site) -> pd.DataFrame:
 
     out[DAYTIME] = (out["solar_elevation_deg"] > ELEVATION_THRESHOLD).astype(int)
     return out
+
+
+def row_validity(df: pd.DataFrame, feature_cols: list[str]) -> pd.Series:
+    """True where the target and every requested feature are present."""
+    columns = [TARGET] + [c for c in feature_cols if c in df.columns]
+    return df[columns].notna().all(axis=1)
+
+
+def scored_mask(df: pd.DataFrame, feature_cols: list[str], window: int = SEQUENCE_LENGTH) -> np.ndarray:
+    """Daytime hours whose full input window is valid, identical for every model."""
+    valid = row_validity(df, feature_cols).astype(float)
+    complete = valid.rolling(window, min_periods=window).min().fillna(0.0).astype(bool)
+    return (complete & (df[DAYTIME] == 1)).to_numpy()
 
 
 def add_recency_weights(

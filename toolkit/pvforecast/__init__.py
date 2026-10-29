@@ -7,6 +7,7 @@ from .evaluation import Evaluation, comparison, holdout, metrics, walk_forward
 from .features import (
     BASE_FEATURES,
     CORE_FEATURES,
+    ENDOGENOUS_FEATURES,
     FEATURE_GROUPS,
     FEATURE_SETS,
     FULL_FEATURES,
@@ -14,17 +15,24 @@ from .features import (
     add_recency_weights,
     build_features,
     design_matrix,
+    scored_mask,
 )
 from .forecast import Forecaster, bias_factor, climatology, daily_energy, horizon_index
 from .models import DEFAULT_MODELS, MODEL_NAMES, get_model
+from .weather import WEATHER_SOURCES, load_nwp, weather_inputs
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "BASELINE_NAMES",
     "BASE_FEATURES",
     "CORE_FEATURES",
     "DEFAULT_MODELS",
+    "ENDOGENOUS_FEATURES",
+    "WEATHER_SOURCES",
+    "load_nwp",
+    "scored_mask",
+    "weather_inputs",
     "Evaluation",
     "FEATURE_GROUPS",
     "FEATURE_SETS",
